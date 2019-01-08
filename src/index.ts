@@ -12,11 +12,11 @@ const PRINTER_OPTIONS: ts.PrinterOptions = {
 };
 
 const IGNORE = {
-  folders: ["node_modules", ".git"],
-  extensions: [".js", ".json"]
+  folders: ["node_modules", ".git"]
 };
 
 const OUTPUT_FOLDER = "output";
+const COMPILE_JS = false;
 
 /*
   process.argv[0] => shebang/interpreter
@@ -24,18 +24,34 @@ const OUTPUT_FOLDER = "output";
 
   process.argv[2] => actual files
 */
-const inputFiles: string[] = process.argv.slice(2);
+const inputFiles: string[] = process.argv.slice(2).length
+  ? process.argv.slice(2)
+  : [process.cwd()];
 
 const printer: ts.Printer = ts.createPrinter(PRINTER_OPTIONS);
 
 const shouldContinue = (absolutePath: string): boolean => {
   const basename = path.basename(absolutePath);
   const extname = path.extname(absolutePath);
+  const isTsFile = extname === ".ts";
+  const isJsFile = extname === ".js";
 
   const isIgnoredFolder = IGNORE.folders.some(folder => folder === basename);
-  const isIgnoredExtension = IGNORE.extensions.some(ext => ext === extname);
 
-  return !isIgnoredExtension && !isIgnoredFolder;
+  if (basename.startsWith(".")) {
+    return false;
+  }
+
+  if (isIgnoredFolder) {
+    return false;
+  }
+
+  if (extname === "") {
+    // then this is a folder (most likely)
+    return true;
+  }
+
+  return isTsFile || (COMPILE_JS && isJsFile);
 };
 
 const handleFile = (
@@ -52,6 +68,7 @@ const handleFile = (
   }
 
   if (!shouldContinue(absolutePath)) {
+    console.log("should not continue ", absolutePath);
     return;
   }
 
@@ -68,7 +85,6 @@ const handleFile = (
     for (const file of files) {
       handleFile(file, absolutePath, fileAction);
     }
-
   } else {
     fileAction(absolutePath);
   }
