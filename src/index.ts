@@ -2,6 +2,17 @@ import ts from "typescript";
 import fs from "fs";
 import path from "path";
 
+import { handleFile, UserOptions } from "./handleFile";
+
+const USER_OPTIONS = {
+  ignore: {
+    folders: ["node_modules", ".git"]
+  },
+  compileJavascript: false,
+  outputFolder: "output"
+};
+
+// Compiler options
 const ENCODING: BufferEncoding = "utf8";
 const SCRIPT_TARGET: ts.ScriptTarget = ts.ScriptTarget.ES2015;
 const LINE_ENDING: ts.NewLineKind = ts.NewLineKind.LineFeed;
@@ -11,84 +22,18 @@ const PRINTER_OPTIONS: ts.PrinterOptions = {
   newLine: LINE_ENDING
 };
 
-const IGNORE = {
-  folders: ["node_modules", ".git"]
-};
-
-const OUTPUT_FOLDER = "output";
-const COMPILE_JS = false;
-
 /*
   process.argv[0] => shebang/interpreter
   process.argv[1] => name of file being executed (here, index.ts)
 
   process.argv[2] => actual files
 */
-const inputFiles: string[] = process.argv.slice(2).length
-  ? process.argv.slice(2)
+const commandLineArguments = process.argv.slice(2);
+const inputFiles: string[] = commandLineArguments.length
+  ? commandLineArguments
   : [process.cwd()];
 
 const printer: ts.Printer = ts.createPrinter(PRINTER_OPTIONS);
-
-const shouldContinue = (absolutePath: string): boolean => {
-  const basename = path.basename(absolutePath);
-  const extname = path.extname(absolutePath);
-  const isTsFile = extname === ".ts";
-  const isJsFile = extname === ".js";
-
-  const isIgnoredFolder = IGNORE.folders.some(folder => folder === basename);
-
-  if (basename.startsWith(".")) {
-    return false;
-  }
-
-  if (isIgnoredFolder) {
-    return false;
-  }
-
-  if (extname === "") {
-    // then this is a folder (most likely)
-    return true;
-  }
-
-  return isTsFile || (COMPILE_JS && isJsFile);
-};
-
-const handleFile = (
-  maybeFile: fs.Dirent | fs.Stats,
-  folderName: string,
-  fileAction: (inputFile: string) => void
-): void => {
-  let absolutePath: string;
-
-  if (maybeFile instanceof fs.Dirent) {
-    absolutePath = path.join(folderName, maybeFile.name);
-  } else {
-    absolutePath = folderName;
-  }
-
-  if (!shouldContinue(absolutePath)) {
-    console.log("should not continue ", absolutePath);
-    return;
-  }
-
-  if (maybeFile.isDirectory()) {
-    /*
-      The type assertion for `options` is because `readdirSync` only accepts
-      {withFileTypes: true} -- _not_ the expected `{withFileTypes: boolean}`.
-      For typechecking then we need to assert that we 'know' that the value of
-      that key can only be `true`.
-    */
-    const options: { withFileTypes: true } = { withFileTypes: true };
-    const files: fs.Dirent[] = fs.readdirSync(absolutePath, options);
-
-    for (const file of files) {
-      handleFile(file, absolutePath, fileAction);
-    }
-  } else {
-    fileAction(absolutePath);
-  }
-};
 
 const getPathTo = (file: string): string => {
   if (path.isAbsolute(file)) {
@@ -98,11 +43,21 @@ const getPathTo = (file: string): string => {
   }
 };
 
-const readFile = (file: string): string => {
+const readFile = (encoding: BufferEncoding, scriptTarget: ts.ScriptTarget) => (
+  file: string
+): string => {
   const fileData: Buffer = fs.readFileSync(file);
-  const stringyData: string = fileData.toString(ENCODING);
+  const stringyData: string = fileData.toString(encoding);
 
-  const sourceFile = ts.createSourceFile("", stringyData, SCRIPT_TARGET);
+  const tsProcessedFile = tsProcessFile(scriptTarget)(stringyData);
+
+  return tsProcessedFile;
+};
+
+const tsProcessFile = (scriptTarget: ts.ScriptTarget) => (
+  stringyData: string
+): string => {
+  const sourceFile = ts.createSourceFile("", stringyData, scriptTarget);
   const result = printer.printNode(
     ts.EmitHint.Unspecified,
     sourceFile,
@@ -127,24 +82,34 @@ const makeFolderIfNotExists = (outputFolder: string): void => {
   }
 };
 
-const processFile = (fileName: string): void => {
+const processFile = (userOptions: UserOptions) => (
+  encoding: BufferEncoding,
+  scriptTarget: ts.ScriptTarget
+) => (fileName: string): void => {
+  const { outputFolder } = userOptions;
   const relativeFileName = path.basename(fileName);
-  const outputPath = path.join(process.cwd(), OUTPUT_FOLDER, relativeFileName);
+  const outputPath = path.join(process.cwd(), outputFolder, relativeFileName);
 
-  const writableOutput = readFile(fileName);
+  const writableOutput = readFile(encoding, scriptTarget)(fileName);
 
   fs.writeFileSync(outputPath, writableOutput);
 };
 
-const removeComments = (fileList: string[], outputFolder: string): void => {
+const removeComments = (userOptions: UserOptions) => (
+  encoding: BufferEncoding,
+  scriptTarget: ts.ScriptTarget
+) => (fileList: string[]): void => {
+  const { outputFolder } = userOptions;
+
   makeFolderIfNotExists(outputFolder);
 
   for (const file of fileList) {
     const contextFile: string = getPathTo(file);
     const fileInfo: fs.Stats = fs.statSync(contextFile);
+    const fileProcessor = processFile(userOptions)(encoding, scriptTarget);
 
-    handleFile(fileInfo, contextFile, processFile);
+    handleFile(userOptions)(fileInfo, contextFile, fileProcessor);
   }
 };
 
-removeComments(inputFiles, OUTPUT_FOLDER);
+removeComments(USER_OPTIONS)(ENCODING, SCRIPT_TARGET)(inputFiles);

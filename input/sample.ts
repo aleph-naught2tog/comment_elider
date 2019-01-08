@@ -1,10 +1,15 @@
-// @ts-ignore
-import ws from "ws";
+namespace ws { // shush compiler! you don't own me
+  export class Server {
+    constructor(x: any) {}
+    clients: { send: any }[];
+    on: any
+  }
+}
 
 export function sendToSocketClients(socketServer: ws.Server, data: {}) {
   const stringifiedData = JSON.stringify(data);
 
-  socketServer.clients.forEach((client: ws) => {
+  socketServer.clients.forEach((client: any) => {
     client.send(stringifiedData, console.error);
   });
 }
